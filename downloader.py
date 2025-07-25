@@ -1,37 +1,35 @@
 import yt_dlp
-import os
-import uuid
 import asyncio
+import json
+import subprocess
 
-DOWNLOAD_DIR = "downloads"
-os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+async def fetch_metadata(url: str) -> dict:
+    """Get metadata of SoundCloud track or playlist."""
+    cmd = ["yt-dlp", "--dump-json", "--no-warnings", url]
+    proc = await asyncio.create_subprocess_exec(
+        *cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+    )
+    stdout, stderr = await proc.communicate()
 
-class WebSocketLogger:
-    def __init__(self, send_func):
-        self.send_func = send_func
+    if proc.returncode != 0:
+        raise Exception(f"yt-dlp error: {stderr.decode()}")
 
-    def debug(self, msg): self._send(f"[DEBUG] {msg}")
-    def info(self, msg): self._send(f"[INFO] {msg}")
-    def warning(self, msg): self._send(f"[WARN] {msg}")
-    def error(self, msg): self._send(f"[ERROR] {msg}")
+    data = stdout.decode().strip().splitlines()
 
-    def _send(self, msg):
-        asyncio.create_task(self.send_func(msg))
+    # Single track returns one JSON, playlist returns many
+    entries = [json.loads(line) for line in data]
+    return entries if len(entries) > 1 else entries[0]
 
-async def download_track_with_logs(url: str, file_id: str, send_func):
-    output_template = os.path.join(DOWNLOAD_DIR, f"{file_id}.%(ext)s")
-    
-    ydl_opts = {
-        "format": "bestaudio/best",
-        "outtmpl": output_template,
-        "logger": WebSocketLogger(send_func),
-        "progress_hooks": [lambda d: asyncio.create_task(send_func(str(d)))],
-        "postprocessors": [{
-            "key": "FFmpegExtractAudio",
-            "preferredcodec": "mp3",
-            "preferredquality": "192"
-        }]
-    }
-
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        ydl.download([url])
+def build_download_command(url: str):
+    return [
+        "yt-dlp",
+        "-f", "bestaudio/best",
+        "--no-playlist",  # Let backend handle playlist logic
+        "--quiet",
+        "--no-warnings",
+        "--extract-audio",
+        "--audio-format", "mp3",
+        "--audio-quality", "192K",
+        url,
+        "-o", "-",  # stream to stdout
+    ]

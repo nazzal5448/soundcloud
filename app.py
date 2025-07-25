@@ -1,52 +1,48 @@
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, Query, HTTPException
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi import FastAPI, Request, Form
+from fastapi.responses import StreamingResponse, HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
-from downloader import download_track_with_logs
-from utils import delete_file_after_delay
-import os
+from fastapi.staticfiles import StaticFiles
+import subprocess
 import asyncio
-import uuid
-import logging
+
+from downloader import fetch_metadata, build_download_command
 
 app = FastAPI()
+
+app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
-DOWNLOAD_DIR = "downloads"
-os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
 @app.get("/", response_class=HTMLResponse)
-async def homepage(request: Request):
+async def home(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
 
-@app.websocket("/ws")
-async def download_via_ws(websocket: WebSocket):
-    await websocket.accept()
+@app.post("/fetch")
+async def fetch(url: str = Form(...)):
     try:
-        data = await websocket.receive_json()
-        url = data.get("url")
-        if not url or not url.startswith("http"):
-            await websocket.send_text("ERROR::Invalid URL")
-            return
-
-        file_id = str(uuid.uuid4())
-        file_path = os.path.join(DOWNLOAD_DIR, f"{file_id}.mp3")
-
-        async def log_callback(msg: str):
-            await websocket.send_text(msg)
-
-        await download_track_with_logs(url, file_id, log_callback)
-        await websocket.send_text(f"DONE::{file_id}.mp3")
-        asyncio.create_task(delete_file_after_delay(file_path, delay=120))
-
-    except WebSocketDisconnect:
-        pass
+        metadata = await fetch_metadata(url)
+        if isinstance(metadata, list):  # Playlist
+            title = "Playlist"
+            tracks = [{"title": m.get("title"), "url": m.get("webpage_url")} for m in metadata]
+            return JSONResponse({"type": "playlist", "tracks": tracks, "title": title})
+        else:  # Single track
+            return JSONResponse({
+                "type": "track",
+                "title": metadata.get("title"),
+                "url": metadata.get("webpage_url")
+            })
     except Exception as e:
-        logging.error(f"WebSocket error: {str(e)}")
-        await websocket.send_text(f"ERROR::{str(e)}")
-        await websocket.close()
+        return JSONResponse({"error": str(e)}, status_code=500)
 
-@app.get("/file/{filename}")
-async def serve_file(filename: str):
-    file_path = os.path.join(DOWNLOAD_DIR, filename)
-    if not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail="File not found")
-    return FileResponse(path=file_path, filename=filename, media_type="audio/mpeg")
+@app.get("/stream")
+async def stream(url: str):
+    try:
+        cmd = build_download_command(url)
+        process = subprocess.Popen(cmd, stdout=subprocess.PIPE)
+
+        return StreamingResponse(
+            process.stdout,
+            media_type="audio/mpeg",
+            headers={"Content-Disposition": 'attachment; filename="soundcloud.mp3"'}
+        )
+    except Exception as e:
+        return HTMLResponse(f"Error: {str(e)}", status_code=500)
