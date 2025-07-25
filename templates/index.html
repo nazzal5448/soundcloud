@@ -1,35 +1,53 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-  <meta charset="UTF-8" />
-  <title>SoundCloud Downloader</title>
+    <title>SoundCloud Downloader</title>
+    <style>
+        body { font-family: sans-serif; padding: 2rem; }
+        #log { background: #111; color: #0f0; padding: 1rem; height: 300px; overflow-y: scroll; white-space: pre-wrap; }
+        #downloadLink { display: none; margin-top: 1rem; }
+    </style>
 </head>
 <body>
-  <h2>Download SoundCloud Track</h2>
-  <form id="downloadForm">
-    <input type="text" name="url" id="url" placeholder="Enter SoundCloud URL" required />
-    <button type="submit">Download</button>
-  </form>
+    <h1>SoundCloud MP3 Downloader</h1>
+    <input id="url" placeholder="Paste SoundCloud URL" style="width: 300px;" />
+    <button onclick="start()">Download</button>
+    <div id="log"></div>
+    <a id="downloadLink" download>Download MP3</a>
 
-  <div id="status"></div>
-  <script>
-    document.getElementById("downloadForm").addEventListener("submit", async function(e) {
-      e.preventDefault();
-      const url = document.getElementById("url").value;
-      document.getElementById("status").innerText = "Downloading...";
-      const response = await fetch(`/download?url=${encodeURIComponent(url)}`);
-      if (response.ok) {
-        const blob = await response.blob();
-        const a = document.createElement("a");
-        a.href = window.URL.createObjectURL(blob);
-        a.download = "track.mp3";
-        a.click();
-        document.getElementById("status").innerText = "Download complete!";
-      } else {
-        const err = await response.text();
-        document.getElementById("status").innerText = "Error: " + err;
-      }
-    });
-  </script>
+    <script>
+        function start() {
+            const url = document.getElementById('url').value;
+            const ws = new WebSocket(`ws://${location.host}/ws`);
+            const log = document.getElementById('log');
+            const link = document.getElementById('downloadLink');
+            log.innerText = 'Starting download...\n';
+            link.style.display = 'none';
+
+            ws.onopen = () => {
+                ws.send(JSON.stringify({ url }));
+            };
+
+            ws.onmessage = (event) => {
+                const msg = event.data;
+                if (msg.startsWith("DONE::")) {
+                    const filename = msg.split("::")[1];
+                    link.href = `/file/${filename}`;
+                    link.innerText = "Click to Download MP3";
+                    link.style.display = 'block';
+                    log.innerText += "\n✅ Download ready!";
+                } else if (msg.startsWith("ERROR::")) {
+                    log.innerText += `\n❌ ${msg.slice(7)}`;
+                } else {
+                    log.innerText += msg + "\n";
+                }
+                log.scrollTop = log.scrollHeight;
+            };
+
+            ws.onerror = (e) => {
+                log.innerText += "\n❌ WebSocket error occurred.";
+            };
+        }
+    </script>
 </body>
 </html>

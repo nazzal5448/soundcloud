@@ -1,31 +1,52 @@
-from fastapi import FastAPI, Request, Query, HTTPException
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, Query, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.templating import Jinja2Templates
-from downloader import download_track
+from downloader import download_track_with_logs
 from utils import delete_file_after_delay
-import asyncio
 import os
+import asyncio
+import uuid
 import logging
 
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
+DOWNLOAD_DIR = "downloads"
+os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
 @app.get("/", response_class=HTMLResponse)
 async def homepage(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
 
-@app.get("/download")
-async def download(url: str = Query(..., description="SoundCloud track URL")):
-    if not url.startswith("http"):
-        raise HTTPException(status_code=400, detail="Invalid URL")
-    
+@app.websocket("/ws")
+async def download_via_ws(websocket: WebSocket):
+    await websocket.accept()
     try:
-        loop = asyncio.get_event_loop()
-        file_path = await loop.run_in_executor(None, lambda: download_track(url))
+        data = await websocket.receive_json()
+        url = data.get("url")
+        if not url or not url.startswith("http"):
+            await websocket.send_text("ERROR::Invalid URL")
+            return
+
+        file_id = str(uuid.uuid4())
+        file_path = os.path.join(DOWNLOAD_DIR, f"{file_id}.mp3")
+
+        async def log_callback(msg: str):
+            await websocket.send_text(msg)
+
+        await download_track_with_logs(url, file_id, log_callback)
+        await websocket.send_text(f"DONE::{file_id}.mp3")
+        asyncio.create_task(delete_file_after_delay(file_path, delay=120))
+
+    except WebSocketDisconnect:
+        pass
     except Exception as e:
-        logging.error(f"Download failed: {str(e)}")
-        raise HTTPException(status_code=500, detail="Failed to download track")
+        logging.error(f"WebSocket error: {str(e)}")
+        await websocket.send_text(f"ERROR::{str(e)}")
+        await websocket.close()
 
-    asyncio.create_task(delete_file_after_delay(file_path))
-
-    return FileResponse(file_path, filename="track.mp3", media_type="audio/mpeg")
+@app.get("/file/{filename}")
+async def serve_file(filename: str):
+    file_path = os.path.join(DOWNLOAD_DIR, filename)
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="File not found")
+    return FileResponse(path=file_path, filename=filename, media_type="audio/mpeg")
