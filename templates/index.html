@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>SoundCloud Downloader</title>
+</head>
+<body>
+  <h2>Download SoundCloud Track</h2>
+  <form id="downloadForm">
+    <input type="text" name="url" id="url" placeholder="Enter SoundCloud URL" required />
+    <button type="submit">Download</button>
+  </form>
+
+  <div id="status"></div>
+  <script>
+    document.getElementById("downloadForm").addEventListener("submit", async function(e) {
+      e.preventDefault();
+      const url = document.getElementById("url").value;
+      document.getElementById("status").innerText = "Downloading...";
+      const response = await fetch(`/download?url=${encodeURIComponent(url)}`);
+      if (response.ok) {
+        const blob = await response.blob();
+        const a = document.createElement("a");
+        a.href = window.URL.createObjectURL(blob);
+        a.download = "track.mp3";
+        a.click();
+        document.getElementById("status").innerText = "Download complete!";
+      } else {
+        const err = await response.text();
+        document.getElementById("status").innerText = "Error: " + err;
+      }
+    });
+  </script>
+</body>
+</html>
