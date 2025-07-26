@@ -38,23 +38,57 @@
   <div id="result"></div>
 
   <script>
-    document.getElementById("fetchForm").addEventListener("submit", async function(e) {
-      e.preventDefault();
-      const url = document.getElementById("urlInput").value;
+    let cachedMetadata = null;
+    let lastFetchedURL = null;
+
+    const urlInput = document.getElementById("urlInput");
+    const resultDiv = document.getElementById("result");
+
+    // Prefetch metadata on paste
+    urlInput.addEventListener("paste", function (e) {
+      const pastedText = (e.clipboardData || window.clipboardData).getData("text");
+
+      cachedMetadata = null;
+      lastFetchedURL = pastedText;
+
       const formData = new FormData();
-      formData.append("url", url);
+      formData.append("url", pastedText);
 
-      const resultDiv = document.getElementById("result");
-      resultDiv.innerHTML = "Fetching info...";
-
-      const res = await fetch("/fetch", {
+      // Fetch silently
+      fetch("/fetch", {
         method: "POST",
         body: formData
+      }).then(res => res.json()).then(data => {
+        cachedMetadata = data;
+      }).catch(() => {
+        cachedMetadata = { error: "Failed to prefetch metadata." };
       });
+    });
 
-      const data = await res.json();
+    // Display when Fetch is clicked
+    document.getElementById("fetchForm").addEventListener("submit", async function(e) {
+      e.preventDefault();
+      const url = urlInput.value.trim();
+      resultDiv.innerHTML = "Fetching info...";
+
+      if (cachedMetadata && lastFetchedURL === url) {
+        displayMetadata(cachedMetadata);
+      } else {
+        const formData = new FormData();
+        formData.append("url", url);
+
+        const res = await fetch("/fetch", {
+          method: "POST",
+          body: formData
+        });
+
+        const data = await res.json();
+        displayMetadata(data);
+      }
+    });
+
+    function displayMetadata(data) {
       resultDiv.innerHTML = "";
-
       if (data.error) {
         resultDiv.innerHTML = `<p style="color:red;">❌ ${data.error}</p>`;
         return;
@@ -79,7 +113,7 @@
             <button>⬇ Download</button>
           </a>`;
       }
-    });
+    }
   </script>
 </body>
 </html>
