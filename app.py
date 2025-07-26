@@ -3,9 +3,9 @@ from fastapi.responses import StreamingResponse, HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 import subprocess
-import asyncio
+import requests
 
-from downloader import fetch_metadata, build_download_command
+from downloader import build_download_command
 
 app = FastAPI()
 
@@ -19,17 +19,17 @@ async def home(request: Request):
 @app.post("/fetch")
 async def fetch(url: str = Form(...)):
     try:
-        metadata = await fetch_metadata(url)
-        if isinstance(metadata, list):  # Playlist
-            title = "Playlist"
-            tracks = [{"title": m.get("title"), "url": m.get("webpage_url")} for m in metadata]
-            return JSONResponse({"type": "playlist", "tracks": tracks, "title": title})
-        else:  # Single track
-            return JSONResponse({
-                "type": "track",
-                "title": metadata.get("title"),
-                "url": metadata.get("webpage_url")
-            })
+        r = requests.get(f"https://soundcloud.com/oembed?url={url}&format=json")
+        if r.status_code != 200:
+            return JSONResponse({"error": "Failed to fetch metadata."}, status_code=500)
+
+        data = r.json()
+        title = data.get("title")
+        return JSONResponse({
+            "type": "track",
+            "title": title,
+            "url": url
+        })
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
